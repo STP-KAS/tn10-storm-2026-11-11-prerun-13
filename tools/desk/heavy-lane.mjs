@@ -12,6 +12,8 @@
 // stop (idle, alive) at 16,000 tKAS of fees, 20,000 tKAS moved (fees + parked), or the pile estimate under 100,000 tKAS;
 // stop (idle) on any rejection other than orphan/already-spent timing, or if the node's fee rate or mass on our own entries
 // drifts from the calibration (rate outside 99-101 x step rate / 100, storage off the SDK by more than 1 percent).
+// lane-minute.log carries the N and rate the lane read at the first tick of that minute (the runner sets them 0.3 s before
+// the boundary).
 // Files: private/heavytx.txt (one id per line, for the probe and the counter), private/heavy-submit.jsonl, logs/lane-minute.log,
 // private/heavy-total.json. phase.log lines LANE_*. Prints counts only; no id, address, key or host leaves this desk.
 import fs from "node:fs";
@@ -45,7 +47,7 @@ let next = 0; const takeCoin = () => (next < bag.length ? bag[next++] : null);
 const entryOf = (e) => ({ address: A16, outpoint: { transactionId: String(e.outpoint.transactionId), index: Number(e.outpoint.index) }, amount: BigInt(e.amount), scriptPublicKey: e.scriptPublicKey || SPK, blockDaaScore: BigInt(e.blockDaaScore || 0), isCoinbase: false });
 const chains = [];   // slot -> { coin, pending, pendingAt, hops, orphanSince }
 const tot = { submits: 0, ok: 0, rej: 0, orphan_retry: 0, lost: 0, already: 0, retired: 0, fees: 0, parked: 0, coins_taken: 0 };
-let min = { k: mkey(Date.now()), submits: 0, ok: 0, rej: 0, orphan: 0, lost: 0 }; let nodeRate = { lo: null, hi: null, smOff: 0, seen: 0 };
+let min = { k: mkey(Date.now()), n: null, rate: null, submits: 0, ok: 0, rej: 0, orphan: 0, lost: 0 }; let nodeRate = { lo: null, hi: null, smOff: 0, seen: 0 };
 let stopped = null, paused = false, held = false, over = 0, lastSampleTs = "";
 const SUB = P("private", "heavy-submit.jsonl"), IDS = P("private", "heavytx.txt"), LM = P("logs", "lane-minute.log");
 function build(coin, rate) {
@@ -63,8 +65,8 @@ function build(coin, rate) {
 }
 function flushMinute(nowK, N, RATE, pendingN) {
   if (nowK === min.k) return;
-  fs.appendFileSync(LM, `${min.k}Z n=${N} rate=${RATE} submits=${min.submits} ok=${min.ok} rej=${min.rej} orphan_retry=${min.orphan} lost=${min.lost} paused=${paused ? 1 : 0} held=${held ? 1 : 0} stopped=${stopped || "-"} pending=${pendingN} fees_tkas=${(tot.fees / 1e8).toFixed(2)} moved_tkas=${((tot.fees + tot.parked) / 1e8).toFixed(2)} node_rate=${nodeRate.lo ?? "-"}..${nodeRate.hi ?? "-"} node_seen=${nodeRate.seen} sm_off=${nodeRate.smOff}\n`);
-  min = { k: nowK, submits: 0, ok: 0, rej: 0, orphan: 0, lost: 0 }; nodeRate = { lo: null, hi: null, smOff: 0, seen: 0 };
+  fs.appendFileSync(LM, `${min.k}Z n=${min.n ?? N} rate=${min.rate ?? RATE} submits=${min.submits} ok=${min.ok} rej=${min.rej} orphan_retry=${min.orphan} lost=${min.lost} paused=${paused ? 1 : 0} held=${held ? 1 : 0} stopped=${stopped || "-"} pending=${pendingN} fees_tkas=${(tot.fees / 1e8).toFixed(2)} moved_tkas=${((tot.fees + tot.parked) / 1e8).toFixed(2)} node_rate=${nodeRate.lo ?? "-"}..${nodeRate.hi ?? "-"} node_seen=${nodeRate.seen} sm_off=${nodeRate.smOff}\n`);
+  min = { k: nowK, n: N, rate: RATE, submits: 0, ok: 0, rej: 0, orphan: 0, lost: 0 }; nodeRate = { lo: null, hi: null, smOff: 0, seen: 0 };
 }
 function probeLast() {
   try { const f = P("logs", "mempool.jsonl"); const st = fs.statSync(f); const n = Math.min(st.size, 16384); const fd = fs.openSync(f, "r"); const b = Buffer.alloc(n); fs.readSync(fd, b, 0, n, st.size - n); fs.closeSync(fd);
@@ -106,6 +108,7 @@ while (!fs.existsSync(P("control", "STOP"))) {
   if (!stopped && (tot.fees >= CAP_FEES || tot.fees + tot.parked >= CAP_MOVED || pileStart - tot.fees - tot.parked < PILE_FLOOR)) { stopped = "cap"; phase(`LANE_CAP fees_tkas=${(tot.fees / 1e8).toFixed(2)} moved_tkas=${((tot.fees + tot.parked) / 1e8).toFixed(2)}`); }
   const now = Date.now(); bucket = Math.min(PER_S, bucket + ((now - lastFill) / 1000) * PER_S); lastFill = now;
   if (!stopped && !paused && !held && inMp) {
+    const jobs = [];
     for (let i = 0; i < N; i++) {
       if (bucket < 1 || min.submits >= PER_MIN) break;
       let c = chains[i]; if (!c) { const coin = takeCoin(); if (!coin) { stopped = "pile-empty"; phase("LANE_STOP reason=pile-empty"); break; } tot.coins_taken++; c = chains[i] = { coin: entryOf(coin), pending: null, pendingAt: 0, hops: 0, orphanSince: 0 }; }
@@ -114,22 +117,27 @@ while (!fs.existsSync(P("control", "STOP"))) {
       const b = build(c.coin, RATE); if (!b) { tot.retired++; const coin = takeCoin(); if (!coin) break; tot.coins_taken++; c.coin = entryOf(coin); continue; }
       let signed; try { signed = k.signTransaction(b.tx, [pk16], true); } catch (e) { stopped = "sign"; phase("LANE_STOP reason=sign"); break; }
       const txid = String(b.tx.id); fs.appendFileSync(IDS, txid + "\n");
-      bucket -= 1; min.submits++; tot.submits++;
-      try {
-        await to(rpc.submitTransaction({ transaction: signed, allowOrphan: false }), 15000, "submit");
+      bucket -= 1; min.submits++; tot.submits++; c.pending = { txid, sm: b.sm, rate: RATE, inflight: 1 }; jobs.push({ i, c, b, txid, signed });
+    }
+    // submit this tick's transactions together (one answer each), then read the answers in slot order
+    const res = await Promise.allSettled(jobs.map((j) => to(rpc.submitTransaction({ transaction: j.signed, allowOrphan: false }), 15000, "submit")));
+    for (let q = 0; q < jobs.length; q++) {
+      const { i, c, b, txid } = jobs[q]; const r = res[q];
+      if (r.status === "fulfilled") {
         min.ok++; tot.ok++; tot.fees += Number(b.fee); tot.parked += Number(SINK_SOMPI); c.orphanSince = 0;
         c.pending = { txid, sm: b.sm, rate: RATE, child: { ...c.coin, outpoint: { transactionId: txid, index: 1 }, amount: b.change, blockDaaScore: 0n } }; c.pendingAt = Date.now();
         fs.appendFileSync(SUB, JSON.stringify({ ts: isoZ(), slot: i, txid, rate: RATE, fee: String(b.fee), sm: b.sm, cm: b.cm, result: "ok" }) + "\n");
-      } catch (e) {
-        const why = reason(e); fs.appendFileSync(SUB, JSON.stringify({ ts: isoZ(), slot: i, txid, rate: RATE, fee: String(b.fee), sm: b.sm, cm: b.cm, result: "rej", reason: why }) + "\n");
+      } else {
+        c.pending = null; const e = r.reason; const why = reason(e); fs.appendFileSync(SUB, JSON.stringify({ ts: isoZ(), slot: i, txid, rate: RATE, fee: String(b.fee), sm: b.sm, cm: b.cm, result: "rej", reason: why }) + "\n");
         if (why === "orphan") { min.orphan++; tot.orphan_retry++; if (!c.orphanSince) c.orphanSince = Date.now(); else if (Date.now() - c.orphanSince > 30000) { min.lost++; tot.lost++; phase(`LANE_CHAIN_LOST slot=${i}`); const coin = takeCoin(); if (coin) { tot.coins_taken++; c.coin = entryOf(coin); } c.orphanSince = 0; } }
         else if (why === "already_spent") { tot.already++; phase(`LANE_CHAIN_RESET slot=${i} reason=already_spent`); const coin = takeCoin(); if (coin) { tot.coins_taken++; c.coin = entryOf(coin); } }
         else if (why === "rpc") { min.rej++; tot.rej++; }
-        else { min.rej++; tot.rej++; stopped = "reject:" + why; phase(`LANE_STOP reason=reject:${why}`); break; }
+        else if (!stopped) { min.rej++; tot.rej++; stopped = "reject:" + why; phase(`LANE_STOP reason=reject:${why} msg=${String(e?.message || e).replace(/[0-9a-f]{64}/gi, "<h>").replace(/kaspatest:[a-z0-9]+/g, "<addr>").slice(0, 120)}`); }
+        else { min.rej++; tot.rej++; }
       }
     }
   }
-  fs.writeFileSync(P("private", "heavy-total.json"), JSON.stringify({ ...tot, fees_tkas: tot.fees / 1e8, parked_tkas: tot.parked / 1e8, pile_start_tkas: pileStart / 1e8, chains: chains.filter(Boolean).length, stopped, ts: isoZ() }));
+  fs.writeFileSync(P("private", "heavy-total.json"), JSON.stringify({ ...tot, fees_tkas: tot.fees / 1e8, parked_tkas: tot.parked / 1e8, pile_start_tkas: pileStart / 1e8, chains: chains.filter(Boolean).length, pending: chains.filter((c) => c && c.pending).length, stopped, ts: isoZ() }));
   const left = 1000 - (Date.now() - t0); if (left > 0) await sleep(left);
 }
 phase(`LANE_END submits=${tot.submits} ok=${tot.ok} rej=${tot.rej} lost=${tot.lost} fees_tkas=${(tot.fees / 1e8).toFixed(2)} parked_tkas=${(tot.parked / 1e8).toFixed(2)} coins_taken=${tot.coins_taken} pending=${chains.filter((c) => c && c.pending).length}`);

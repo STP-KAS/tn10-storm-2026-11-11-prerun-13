@@ -25,7 +25,7 @@ For pre-run 13 the operator does not paste. On 2026-11-12 he asked TN10 ops for 
 
 | Who | Role | What not to do |
 |---|---|---|
-| **Desk (Build)** | Sends the sixteen families (five fee tiers, one path, one build) and runs our own heavy lane (pre-run 13, the operator's OK, calibrated first). No payments. Its private TN10 node counts what the chain accepted (lock line (iv)) and its probe reads the mempool (xii). Publishes `hashes/SIXTEEN.md`, `logs/PRE-RUN-OPEN.md`, `counts/desk/` per step, `counts/chain/TIMELINE.md` and `MEMPOOL.md` after the tail, and `logs/METHOD.md`. | Do not stop or wipe the desk node. No Windows PowerShell 5.1, no `KaspaPublicNode`, no miner, no devnet. No 8- or 32-family publisher. No second runner. Never restart the runner mid-run. No payment sender, no heavy lane. |
+| **Desk (Build)** | Sends the sixteen families (five fee tiers, one path, one build) and runs our own heavy lane (pre-run 13, the operator's OK, calibrated first). No payments. Its private TN10 node counts what the chain accepted (lock line (iv)) and its probe reads the mempool (xii). Publishes `hashes/SIXTEEN.md`, `logs/PRE-RUN-OPEN.md`, `counts/desk/` per step, `counts/chain/TIMELINE.md` and `MEMPOOL.md` after the tail, and `logs/METHOD.md`. | Do not stop or wipe the desk node. No Windows PowerShell 5.1, no `KaspaPublicNode`, no miner, no devnet. No 8- or 32-family publisher. No second runner. Never restart the runner mid-run. No payment sender. No heavy lane other than the runner's own lane process. |
 | **Mini** | Second chain read on its own node. Does not send, mine, or hold a key. Publishes `logs/MINI-ARMED.md`, then `counts/mini/` when the matching desk file is on origin. | Do not wipe. Do not repeat the desk's head as Mini's. |
 | **Bot (TN10 ops)** | Sends payments in the HOLD-4 minute only, on a synced public kaspad that is not one the desk kept, or publishes a legal `NO SEND`. | Do not send in any other step. One waiter. No local node. |
 
@@ -49,7 +49,21 @@ Not a gate. Read on 2026-11-12 between 12:00Z and 12:20Z. This is our own TN10 t
 
 ## Offline rehearsal, recorded before `PRE-RUN-OPEN`
 
-REHEARSAL_PLACEHOLDER
+Two rehearsals on the desk, against a local bare origin. The real pre-run 13 desk runner, counter, read-only mempool probe and our heavy-lane process ran with the rehearsal family sender, the stand-in genesis submit and pre-run 9's stand-in node. The heavy lane submitted only to the stand-in payment-key node; none of its rehearsal transactions reached a real node. Short times: BASE 1 minute, each lane segment 1 minute, RETURN 2 minutes, a 2-minute tail. The probe read the real desk node (read-only), so its columns show the real mempool at that time and none of our rehearsal transactions.
+
+Rehearsal A (p13-a), 2026-11-12 12:19:18Z to 12:39:59Z (Brussels 13:19 to 13:40). Runner exit 0, every step file, `TIMELINE`, `MEMPOOL` and `METHOD` published. Lane: 956 submits, 956 accepted by the stand-in, 0 rejected, clean `LANE_END` on STOP. Three faults found and fixed before rehearsal B:
+
+- `logs/lane-minute.log` labelled each minute with the N of the next minute (the flush used the new minute's value). Fixed: each minute now carries the N and rate the lane read at its first tick.
+- The lane reached only about 14 chains and about 140 submits a minute at N = 40 and 60: it awaited each submit in turn, and the rehearsal's stand-in answers in about 400 ms. Fixed: each tick's submits now go out together and their answers are read in slot order.
+- Two runner lines printed the literal text `pre-run ${RUN_NO}` (a plain string, not a template). Fixed.
+
+Rehearsal B (p13-b), 2026-11-12 12:47:22Z to 13:08:24Z (Brussels 13:47 to 14:08), with the fixed runner and lane (the files in [tools/desk](tools/desk/README.md)). Runner exit 0.
+
+- `FEE_SPLIT` verified on the submit rows: floor 100, r110 110, r126 126, r150 150, r200 200, every tier on the desk path. No payment sender was started (`senders=0`).
+- Lane timeline as planned: `LANE_SET` N = 0, 10, 20, 40, 60, 40, 20, 0, then 40 at 126, then 0 for the drain, each set 1 second before its minute. `lane-minute.log` carried the right N per minute.
+- Lane: 3,500 submits, 3,500 accepted by the stand-in, 0 rejected, 0 chains lost, 60 payment-key coins taken (one per chain); about 590 submits a minute at N = 40 and 60, under the 600 cap. `LANE_END` came on STOP with nothing pending. Stand-in fees 974.15 tKAS and 131.25 tKAS parked; the stand-in is not the network, so those are not spend.
+- BASE, HOLD-1 (the climb), HOLD-2 (the descent), HOLD-3 (126), the pinned HOLD-4 minute (13:02Z) and RETURN published as `OBSERVATION`, each with the lane N and rate per minute, our heavy and the outside heavy in separate columns, the chain table and the probe table. No `${` or earlier pre-run label left in the files. No rehearsal process was left running.
+- Not exercised by either rehearsal: the lane's pause on more than N + 2 of our entries in the mempool, and the node-side drift check, since the probe reads the real node and the rehearsal lane wrote only to the stand-in. Both stay as live guards.
 
 ## Status after the live run
 
