@@ -4,6 +4,8 @@
 
 # tn10-storm-2026-11-11-prerun-13
 
+> **Result (after the run).** Pre-run 13 ran BASE through the pinned HOLD-4 minute and is marked **FAILED before RETURN** ([logs/FAILED.md](logs/FAILED.md)): the family lane's coin count went under its abort line 1.5 minutes before RETURN closed, with about 109,500 usable tKAS left (change fragments, not a shortage). What we observed: [logs/LESSONS.md](logs/LESSONS.md). Our heavy lane slowed other TN10 users' low-fee transactions while it ran; see the [public statement](PLAYBOOK.md#public-statement).
+
 **Pre-run 13 of the Wednesday neuron.** The neuron stays [tn10-storm-2026-11-11](https://github.com/STP-KAS/tn10-storm-2026-11-11). This repo does not edit that repo, does not write `REVIEW_CLOSED`, and does not set or move a clock for it. [tn10-storm-2026-11-10](https://github.com/STP-KAS/tn10-storm-2026-11-10) (Tuesday) is not edited from here either.
 
 > **Our own testing.** This is our own Kaspa Testnet-10 testing, run on our own machines and nodes. What these pages report is what we observed in this run; it is not a claim of how TN10 or Kaspa behave in general.
