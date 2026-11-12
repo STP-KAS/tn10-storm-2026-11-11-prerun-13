@@ -1,0 +1,12 @@
+> **Experimental. We are just trying this.** [Disclaimer](../../DISCLAIMER.md) · Kaspa Testnet-10 only. No id, key, address, host, or port in this folder.
+
+# Desk runner, pre-run 13
+
+The private config, key file, sink key, node addresses and kit stay on the desk. Nothing here starts a machine.
+
+- `desk-runner.mjs`: pre-run 12's runner plus (xvi) our own heavy lane as a kid of the runner, at N = 0 until the runner's timeline sets it: BASE N = 0, HOLD-1 the climb (N = 10, 20, 40, 60), HOLD-2 the descent (40, 20, 0), HOLD-3 N = 40 at 126, then N = 0 (the drain) through HOLD-4 and RETURN. One timeline of whole minutes, fixed when the lane starts, so a step render never stretches a lane step. Each step file's tier table carries the lane's N and rate, our heavy in the mempool and landed, and the outside heavy, per minute. The run number in commit messages and in the FAILED text comes from the config (`run_no`), which fixes pre-run 12's `Pre-run 11` label leftovers.
+- `heavy-lane.mjs`: the lane. N chains from the payment key; each transaction has one input and two plain outputs (0.0375 tKAS to a dedicated sink key of ours, the change back into the chain); fee = rate × the SDK's mass, which the calibration matched to the node's. A chain's next transaction goes out only after the previous one left the mempool. Guards: pause above N + 2 lane entries for three probe samples, 600 submits a minute, hold at mempool 90,000 or ready mass over 45 blocks, stop at 16,000 tKAS of fees or 20,000 tKAS moved or the pile under 100,000 tKAS, stop on a non-timing rejection or a drift of the node's rate or mass on our own entries. It refuses to start without the calibration file. Ids stay in the desk's private folder.
+- `heavy-calib.mjs`: the calibration. Builds one lane transaction exactly as the lane does, submits it on the desk's private node, reads it back from the desk mempool, and writes ok only if the node's storage mass is within 1 percent of the SDK's and the node's fee rate is 99–101.
+- `mempool-probe.mjs`: pre-run 12's read-only probe plus a class `heavy` for our lane, so our heavy and the outside heavy are counted apart. It submits nothing.
+- `counter.mjs`: pre-run 12's counter plus `hv`, our lane's transactions accepted on chain per minute, taken out of other traffic.
+- `pay2.mjs`, `paypool.mjs`, `preflight.mjs`: unchanged; the payment senders are not started in pre-run 13.
